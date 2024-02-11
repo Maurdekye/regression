@@ -12,19 +12,17 @@ mod regressors;
 #[derive(serde::Deserialize)]
 struct Record(f64, f64);
 
-fn error(records: &Vec<Record>, regressor: impl Fn(&f64) -> f64) -> f64 {
-    records
-        .iter()
-        .map(|Record(x, y)| (regressor(x) - y).powf(2.0))
-        .sum()
-}
-
 trait GradientDescent {
-    const DIMENSION: usize;
-    type Input;
+    const IN_DIMENSION: usize;
+    const PARAM_DIMENSION: usize;
+    const OUT_DIMENSION: usize;
 
-    fn predict(&self, nudge: Option<(usize, f64)>, input: &Self::Input) -> f64;
-    fn descend(&mut self, adjustments: [f64; Self::DIMENSION]);
+    fn predict(
+        &self,
+        nudge: Option<(usize, f64)>,
+        input: &[f64; Self::IN_DIMENSION],
+    ) -> [f64; Self::OUT_DIMENSION];
+    fn descend(&mut self, adjustments: [f64; Self::PARAM_DIMENSION]);
 }
 
 trait Magnitude {
@@ -37,7 +35,7 @@ impl<const N: usize> Magnitude for [f64; N] {
             0 => 0.0,
             1 => self[0],
             2 => self[0].hypot(self[1]),
-            _ => self.iter().map(|x| x*x).sum::<f64>().sqrt()
+            _ => self.iter().map(|x| x * x).sum::<f64>().sqrt(),
         }
     }
 }
@@ -73,9 +71,22 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let mut regressor = Polynomial::<3>::default();
 
     for i in 1.. {
-        let base_error = regressor.predict(None, &data);
+        let base_error: f64 = data
+            .iter()
+            .map(|datum| {
+                let delta = datum.1 - regressor.predict(None, &[datum.0])[0];
+                delta * delta
+            })
+            .sum();
         let gradients = array::from_fn(|nudge| {
-            let gradient_error = regressor.predict(Some((nudge, args.epsilon)), &data);
+            let gradient_error: f64 = data
+                .iter()
+                .map(|datum| {
+                    let delta =
+                        datum.1 - regressor.predict(Some((nudge, args.epsilon)), &[datum.0])[0];
+                    delta * delta
+                })
+                .sum();
             (base_error - gradient_error) / args.epsilon
         });
         let magnitude = gradients.magnitude();
