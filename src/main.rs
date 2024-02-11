@@ -1,7 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 use csv::Reader;
-use std::{error::Error, fmt::Display, path::PathBuf};
+use std::{array, error::Error, path::PathBuf};
 
 use clap::Parser;
 
@@ -23,7 +23,7 @@ trait GradientDescent {
     const DIMENSION: usize;
     type Input;
 
-    fn gradients(&self, input: &Self::Input, epsilon: f64) -> ([f64; Self::DIMENSION], f64);
+    fn predict(&self, nudge: Option<(usize, f64)>, input: &Self::Input) -> f64;
     fn descend(&mut self, adjustments: [f64; Self::DIMENSION]);
 }
 
@@ -51,13 +51,17 @@ struct Args {
     #[clap(short, long, default_value_t = 1e-10)]
     temperature: f64,
 
-    /// Epsilon value for regression. should be a low value
+    /// Epsilon value in derivative for computing gradients. should be a low value
     #[clap(short, long, default_value_t = 1e-8)]
     epsilon: f64,
 
     /// Finish when magnitude of gradient falls below this value
     #[clap(short, long, default_value_t = 1e-8)]
     finish_threshold: f64,
+
+    /// Print progress in intervals of this many iterations
+    #[clap(short, long, default_value_t = 1_000_000)]
+    print_interval: usize,
 }
 
 fn run(args: Args) -> Result<(), Box<dyn Error>> {
@@ -69,17 +73,21 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let mut regressor = Polynomial::<3>::default();
 
     for i in 1.. {
-        let (gradients, error) = regressor.gradients(&data, args.epsilon);
+        let base_error = regressor.predict(None, &data);
+        let gradients = array::from_fn(|nudge| {
+            let gradient_error = regressor.predict(Some((nudge, args.epsilon)), &data);
+            (base_error - gradient_error) / args.epsilon
+        });
         let magnitude = gradients.magnitude();
         if magnitude.abs() <= args.finish_threshold {
+            println!("Done after {i} iterations");
             break;
         }
         regressor.descend(gradients.map(|x| x * args.temperature));
-        if i % 1_000_000 == 0 {
-            println!("i: {i}, r: {regressor}, mag: {magnitude} err: {error}");
+        if i % args.print_interval == 0 {
+            println!("i: {i}, r: {regressor}, mag: {magnitude} err: {base_error}");
         }
     }
-    println!("Done");
     println!("{regressor:#?}");
 
     Ok(())

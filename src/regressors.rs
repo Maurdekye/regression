@@ -1,4 +1,4 @@
-use std::{array, fmt::Display};
+use std::fmt::Display;
 
 use crate::{error, GradientDescent, Record};
 
@@ -27,17 +27,13 @@ impl GradientDescent for Exponential {
     const DIMENSION: usize = 2;
     type Input = Vec<Record>;
 
-    fn gradients(&self, input: &Self::Input, epsilon: f64) -> ([f64; Self::DIMENSION], f64) {
-        let base_error = error(input, |x| self.base * self.growth.powf(*x));
-        (
-            [
-                (base_error - error(input, |x| (self.base + epsilon) * self.growth.powf(*x)))
-                    / epsilon,
-                (base_error - error(input, |x| self.base * (self.growth + epsilon).powf(*x)))
-                    / epsilon,
-            ],
-            base_error,
-        )
+    fn predict(&self, nudge: Option<(usize, f64)>, input: &Self::Input) -> f64 {
+        match nudge {
+            None => error(input, |x| self.base * self.growth.powf(*x)),
+            Some((0, epsilon)) => error(input, |x| (self.base + epsilon) * self.growth.powf(*x)),
+            Some((1, epsilon)) => error(input, |x| self.base * (self.growth + epsilon).powf(*x)),
+            _ => unreachable!(),
+        }
     }
 
     fn descend(&mut self, adjustments: [f64; Self::DIMENSION]) {
@@ -71,17 +67,13 @@ impl GradientDescent for Linear {
     const DIMENSION: usize = 2;
     type Input = Vec<Record>;
 
-    fn gradients(&self, input: &Self::Input, epsilon: f64) -> ([f64; Self::DIMENSION], f64) {
-        let base_error = error(input, |x| self.slope * x + self.y_intercept);
-        (
-            [
-                (base_error - error(input, |x| (self.slope + epsilon) * x + self.y_intercept))
-                    / epsilon,
-                (base_error - error(input, |x| self.slope * x + self.y_intercept + epsilon))
-                    / epsilon,
-            ],
-            base_error,
-        )
+    fn predict(&self, nudge: Option<(usize, f64)>, input: &Self::Input) -> f64 {
+        match nudge {
+            None => error(input, |x| self.slope * x + self.y_intercept),
+            Some((0, epsilon)) => error(input, |x| (self.slope + epsilon) * x + self.y_intercept),
+            Some((1, epsilon)) => error(input, |x| self.slope * x + self.y_intercept + epsilon),
+            _ => unreachable!(),
+        }
     }
 
     fn descend(&mut self, adjustments: [f64; Self::DIMENSION]) {
@@ -119,7 +111,7 @@ impl<const TERMS: usize> Display for Polynomial<TERMS> {
                     format!("{sign}{}{term}", constant.abs())
                 })
                 .collect::<Vec<_>>()
-                .join(" ")
+                .join("")
         )
     }
 }
@@ -136,27 +128,23 @@ impl<const TERMS: usize> GradientDescent for Polynomial<TERMS> {
     const DIMENSION: usize = TERMS;
     type Input = Vec<Record>;
 
-    fn gradients(&self, input: &Self::Input, epsilon: f64) -> ([f64; Self::DIMENSION], f64) {
-        let base_error = error(input, |x| {
-            self.terms
-                .iter()
-                .enumerate()
-                .map(|(i, constant)| constant * x.powi(i as i32))
-                .sum()
-        });
-        (
-            array::from_fn(|nudge_term| {
-                let nudge_error = error(input, |x| {
-                    self.terms
+    fn predict(&self, nudge: Option<(usize, f64)>, input: &Self::Input) -> f64 {
+        match nudge {
+            None => error(input, |x| {
+                self.terms
                     .iter()
                     .enumerate()
-                    .map(|(i, constant)| if i == nudge_term { constant + epsilon } else { *constant } * x.powi(i as i32))
+                    .map(|(i, constant)| constant * x.powi(i as i32))
                     .sum()
-                });
-                (base_error - nudge_error) / epsilon
             }),
-            base_error,
-        )
+            Some((nudge, epsilon)) => error(input, |x| {
+                self.terms
+                .iter()
+                .enumerate()
+                .map(|(i, constant)| if i == nudge { constant + epsilon } else { *constant } * x.powi(i as i32))
+                .sum()
+            }),
+        }
     }
 
     fn descend(&mut self, adjustments: [f64; Self::DIMENSION]) {
