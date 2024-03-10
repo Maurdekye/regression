@@ -1,11 +1,12 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 use csv::Reader;
-use std::{array, error::Error, path::PathBuf};
+use std::{array, error::Error, path::PathBuf, time::Duration};
 
 use clap::Parser;
+use progress_observer::Observer;
 
-use crate::regressors::{Exponential, Linear, Polynomial};
+use crate::regressors::{Exponential, Linear, ScaledTranslatedEquation, ParametricScaledTranslatedEquation, Polynomial};
 
 mod regressors;
 
@@ -57,9 +58,9 @@ struct Args {
     #[clap(short, long, default_value_t = 1e-8)]
     finish_threshold: f64,
 
-    /// Print progress in intervals of this many iterations
-    #[clap(short, long, default_value_t = 1_000_000)]
-    print_interval: usize,
+    /// Print progress this often, in seconds
+    #[clap(short, long, default_value_t = 1.0)]
+    print_interval: f64,
 }
 
 fn run(args: Args) -> Result<(), Box<dyn Error>> {
@@ -68,9 +69,32 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         .deserialize::<Record>()
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut regressor = Polynomial::<3>::default();
+    // let mut regressor = ParametricEquation::new(|x: f64| x.abs().powf(-x.powi(2)));
+    // let mut regressor = ParametricEquation {
+    //     x_0: 0.9409389715046765,
+    //     y_0: 0.0020235808788646808,
+    //     width: 0.01943965396363798, 
+    //     height: 0.19151100798519274,
+    //     function: |x: f64| x.abs().powf(-x.powi(2)) 
+    // };
+    let mut regressor = ParametricScaledTranslatedEquation {
+        x_0: 0.0,
+        y_0: 0.0018524,
+        width: 831.0, 
+        height: 0.0001476,
+        parameters: [1.65],
+        function: |x: f64, p: [f64; 1]| x.abs().powf(-(x.powi(2) * p[0])) 
+    };
 
-    for i in 1.. {
+    for (i, should_print) in Observer::new_with(
+        Duration::from_secs_f64(args.print_interval),
+        progress_observer::Options {
+            checkpoint_size: 5000,
+            ..Default::default()
+        },
+    )
+    .enumerate()
+    {
         let base_error: f64 = data
             .iter()
             .map(|datum| {
@@ -95,11 +119,11 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             break;
         }
         regressor.descend(gradients.map(|x| x * args.temperature));
-        if i % args.print_interval == 0 {
+        if should_print {
             println!("i: {i}, r: {regressor}, mag: {magnitude} err: {base_error}");
         }
     }
-    println!("{regressor:#?}");
+    println!("{regressor}");
 
     Ok(())
 }

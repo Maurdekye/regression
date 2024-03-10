@@ -145,6 +145,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "progress-observer"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e016e9322b9d9c52a5f8f5e60cc40cfebf30d59799d2972e01b0e3e7e8ea323"
+
+[[package]]
 name = "quote"
 version = "1.0.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -159,6 +165,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "csv",
+ "progress-observer",
  "serde",
 ]
 
