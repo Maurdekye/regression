@@ -1,12 +1,23 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 use csv::Reader;
-use std::{array, error::Error, path::PathBuf, time::Duration};
+use std::{
+    array,
+    error::Error,
+    fs::{create_dir, create_dir_all},
+    path::PathBuf,
+    time::Duration,
+};
 
 use clap::Parser;
 use progress_observer::Observer;
 
-use crate::regressors::{Exponential, Linear, ScaledTranslatedEquation, ParametricScaledTranslatedEquation, Polynomial};
+use plotters::prelude::*;
+// use plotters::style::full_palette::*;
+
+use crate::regressors::{
+    Exponential, Linear, ParametricScaledTranslatedEquation, Polynomial, ScaledTranslatedEquation,
+};
 
 mod regressors;
 
@@ -61,7 +72,54 @@ struct Args {
     /// Print progress this often, in seconds
     #[clap(short, long, default_value_t = 1.0)]
     print_interval: f64,
+
+    /// Directory to output plots to
+    #[clap(short, long, default_value = "graphs")]
+    plot_out: PathBuf,
 }
+
+// fn regress(args: &Args, regressor: &R, data: Vec<Record>)
+// where
+//     R: GradientDescent,
+// {
+//     for (i, should_print) in Observer::new_with(
+//         Duration::from_secs_f64(args.print_interval),
+//         progress_observer::Options {
+//             checkpoint_size: 5000,
+//             ..Default::default()
+//         },
+//     )
+//     .enumerate()
+//     {
+//         let base_error: f64 = data
+//             .iter()
+//             .map(|datum| {
+//                 let delta = datum.1 - regressor.predict(None, &[datum.0])[0];
+//                 delta * delta
+//             })
+//             .sum();
+//         let gradients = array::from_fn(|nudge| {
+//             let gradient_error: f64 = data
+//                 .iter()
+//                 .map(|datum| {
+//                     let delta =
+//                         datum.1 - regressor.predict(Some((nudge, args.epsilon)), &[datum.0])[0];
+//                     delta * delta
+//                 })
+//                 .sum();
+//             (base_error - gradient_error) / args.epsilon
+//         });
+//         let magnitude = gradients.magnitude();
+//         if magnitude.abs() <= args.finish_threshold {
+//             println!("Done after {i} iterations");
+//             break;
+//         }
+//         regressor.descend(gradients.map(|x| x * args.temperature));
+//         if should_print {
+//             println!("i: {i}, r: {regressor}, mag: {magnitude} err: {base_error}");
+//         }
+//     }
+// }
 
 fn run(args: Args) -> Result<(), Box<dyn Error>> {
     let mut reader = Reader::from_path(args.data_file)?;
@@ -69,27 +127,49 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
         .deserialize::<Record>()
         .collect::<Result<Vec<_>, _>>()?;
 
-    // let mut regressor = ParametricEquation::new(|x: f64| x.abs().powf(-x.powi(2)));
-    // let mut regressor = ParametricEquation {
+    let fcmp = |a: &f64, b: &f64| a.total_cmp(b);
+    let min_x = data.iter().map(|r| r.0).min_by(fcmp).unwrap();
+    let max_x = data.iter().map(|r| r.0).max_by(fcmp).unwrap();
+    let min_y = data.iter().map(|r| r.1).min_by(fcmp).unwrap();
+    let max_y = data.iter().map(|r| r.1).max_by(fcmp).unwrap();
+    let zoom_out = 1.1;
+    let x_range = max_x - min_x;
+    let y_range = max_y - min_y;
+    let mid_x = min_x + x_range / 2.0;
+    let mid_y = min_y + y_range / 2.0;
+    let min_x = mid_x - (x_range * zoom_out) / 2.0;
+    let max_x = mid_x + (x_range * zoom_out) / 2.0;
+    let min_y = mid_y - (y_range * zoom_out) / 2.0;
+    let max_y = mid_y + (y_range * zoom_out) / 2.0;
+    create_dir_all(args.plot_out.clone()).unwrap();
+
+    // let mut regressor = ScaledTranslatedEquation::new(|x: f64| x.abs().powf(-x.powi(2)));
+    // let mut regressor = ScaledTranslatedEquation {
     //     x_0: 0.9409389715046765,
     //     y_0: 0.0020235808788646808,
-    //     width: 0.01943965396363798, 
+    //     width: 0.01943965396363798,
     //     height: 0.19151100798519274,
-    //     function: |x: f64| x.abs().powf(-x.powi(2)) 
+    //     function: |x: f64| x.abs().powf(-x.powi(2))
     // };
     let mut regressor = ParametricScaledTranslatedEquation {
         x_0: 0.0,
-        y_0: 0.0018524,
-        width: 831.0, 
-        height: 0.0001476,
-        parameters: [1.65],
-        function: |x: f64, p: [f64; 1]| x.abs().powf(-(x.powi(2) * p[0])) 
+        y_0: 1800.0,
+        width: 900.0,
+        height: 200.0,
+        parameters: [1.5, 4.0],
+        function: |x: f64, p: [f64; 2]| {
+            if x <= 0.0 {
+                0.0
+            } else {
+                x.powf(-(x.powf(p[1]) * p[0]))
+            }
+        },
     };
 
     for (i, should_print) in Observer::new_with(
         Duration::from_secs_f64(args.print_interval),
         progress_observer::Options {
-            checkpoint_size: 5000,
+            checkpoint_size: 100,
             ..Default::default()
         },
     )
@@ -114,13 +194,39 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
             (base_error - gradient_error) / args.epsilon
         });
         let magnitude = gradients.magnitude();
-        if magnitude.abs() <= args.finish_threshold {
-            println!("Done after {i} iterations");
-            break;
-        }
+        let should_finish = magnitude.abs() <= args.finish_threshold;
         regressor.descend(gradients.map(|x| x * args.temperature));
-        if should_print {
+        if should_print || should_finish {
             println!("i: {i}, r: {regressor}, mag: {magnitude} err: {base_error}");
+
+            // draw plot for iteration result
+            let img_name = format!("{}/{i}.png", args.plot_out.to_string_lossy());
+            let root = BitMapBackend::new(&img_name, (1920, 1080)).into_drawing_area();
+            root.fill(&WHITE)?;
+            let mut plot = ChartBuilder::on(&root)
+                .margin(5)
+                .x_label_area_size(40)
+                .y_label_area_size(50)
+                .build_cartesian_2d(min_x..max_x, min_y..max_y)
+                .unwrap();
+            plot.configure_mesh().draw().unwrap();
+            plot.draw_series(
+                data.iter()
+                    .map(|Record(x, y)| Circle::new((*x, *y), 1, GREEN.filled())),
+            )
+            .unwrap();
+            plot.draw_series(LineSeries::new(
+                data.iter()
+                    .map(|Record(x, _)| (*x, regressor.predict(None, &[*x])[0])),
+                RED.stroke_width(2),
+            ))
+            .unwrap();
+            root.present().unwrap();
+
+            if should_finish {
+                println!("Done after {i} iterations");
+                break;
+            }
         }
     }
     println!("{regressor}");
